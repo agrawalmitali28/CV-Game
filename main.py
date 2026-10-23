@@ -653,11 +653,9 @@ class Game:
     def draw_game(self, now):
         self.draw_hud(now)
         n = self.puzzle.size
-        self.tile_size = min(88, 490//n)
+        self.tile_size = min(88, 480//n)
         board_w = n*self.tile_size
-        self.grid_rect = pygame.Rect(64, 154, board_w, board_w)
-        # center board vertically around its designated region
-        self.grid_rect.y = 165
+        self.grid_rect = pygame.Rect((WIDTH - board_w)//2, 80, board_w, board_w)
         self.panel(self.grid_rect.inflate(18, 18), (10, 18, 39), (31, 66, 101), 18)
         reached = self.puzzle.reachable()
         self.draw_laser(now)
@@ -677,22 +675,7 @@ class Game:
                 self.draw_pipe(self.tile_center(pos), mask, self.tile_size-8, active,
                                pos == self.puzzle.source, pos == self.puzzle.exit,
                                pos in reached, now)
-        # Right-side control/status card
-        side = pygame.Rect(610, 164, 420, 365)
-        self.panel(side)
-        self.draw_text("MISSION STATUS", (635, 184), self.medium, CYAN)
-        self.draw_text("Connect the source to the exit.", (635, 225), self.small, MUTED)
-        self.draw_text("Only matching pipe openings carry energy.", (635, 247), self.small, MUTED)
-        pygame.draw.line(self.screen, (42, 65, 101), (635, 279), (1004, 279), 1)
-        self.draw_text("INPUT", (635, 298), self.small, PURPLE)
-        self.draw_text("MOUSE  click a tile to rotate", (635, 323), self.font)
-        self.draw_text("HAND   hover 0.5s to rotate", (635, 353), self.font)
-        self.draw_text("SPACE  pause / resume", (635, 383), self.font)
-        self.draw_text("ARROWS+ENTER  keyboard play", (635, 413), self.font)
-        self.draw_text("C webcam  R restart", (635, 443), self.font)
-        self.draw_text("STATUS", (635, 478), self.small, PURPLE)
-        self.draw_text(self.tracker.status[:46], (635, 500), self.small, GREEN if self.tracker.enabled else MUTED)
-        # progress bar for dwell
+        # dwell progress ring
         if self.dwell_pos and not self.dwell_fired:
             progress = min(1.0, (time.time()-self.dwell_start)/DWELL_SECONDS)
             cx, cy = self.tile_center(self.dwell_pos)
@@ -700,11 +683,7 @@ class Game:
             pygame.draw.arc(self.screen, MAGENTA, pygame.Rect(cx-self.tile_size//2+5, cy-self.tile_size//2+5,
                             self.tile_size-10, self.tile_size-10), -math.pi/2,
                             -math.pi/2+math.tau*progress, 5)
-        if self.feedback and time.time() < self.feedback_until:
-            self.draw_text(self.feedback, (610, 555), self.font, GREEN, False)
-        self.draw_text("PATH: RECIPROCAL CONNECTIONS ONLY", (610, 594), self.small, MUTED)
-        self.draw_text("Reach the green exit before the clock hits zero.", (610, 619), self.small, MUTED)
-        self.draw_text("Mouse works even if camera access is unavailable.", (610, 644), self.small, MUTED)
+        # webcam cursor
         tip = self.tracker.cursor
         if tip:
             pygame.draw.circle(self.screen, (0, 0, 0), tip, 12)
@@ -719,17 +698,17 @@ class Game:
         shade = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
         shade.fill((3, 7, 19, 205))
         self.screen.blit(shade, (0, 0))
-        box = pygame.Rect(260, 155, 580, 450)
+        box = pygame.Rect(280, 180, 540, 380)
         self.panel(box, (12, 22, 47), accent, 22)
-        self.draw_text(title, (WIDTH//2, 205), self.large, accent, True)
-        self.draw_text(subtitle, (WIDTH//2, 263), self.font, WHITE, True)
-        y = 312
+        self.draw_text(title, (WIDTH//2, 215), self.large, accent, True)
+        self.draw_text(subtitle, (WIDTH//2, 265), self.font, WHITE, True)
+        y = 310
         for line in lines:
-            self.draw_text(line, (WIDTH//2, y), self.font, MUTED, True); y += 29
+            self.draw_text(line, (WIDTH//2, y), self.small, MUTED, True); y += 25
         self.buttons = []
-        by = max(490, y+8)
+        by = max(470, y + 15)
         for i, (label, action) in enumerate(buttons):
-            rect = pygame.Rect(WIDTH//2-115, by+i*54, 230, 42)
+            rect = pygame.Rect(WIDTH//2-110, by+i*48, 220, 40)
             self.draw_button(rect, label, accent, True)
             self.buttons.append((rect, action))
 

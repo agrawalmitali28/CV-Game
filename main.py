@@ -42,6 +42,8 @@ WHITE = (231, 242, 255)
 MUTED = (128, 151, 184)
 GREEN = (89, 255, 177)
 RED = (255, 90, 112)
+PIPE_DIM = (72, 96, 140)   # pipe with no laser in it
+PIPE_EDGE = (6, 10, 24)    # dark outline around every pipe
 
 # Direction vectors are row/column; bit flags make reciprocal checks cheap.
 N, E, S, W = 1, 2, 4, 8
@@ -442,6 +444,7 @@ class Game:
         self.state = "MENU"
         self.buttons = []
         self.glow_cache = {}
+        self.background = None
         self.selected = (0, 0)
         self.level_points = self.level_moves = 0
         self.level_time = 0.0
@@ -490,6 +493,8 @@ class Game:
     def new_level(self):
         size = min(5 + (self.level - 1)//2, 7)
         self.puzzle = Puzzle(size)
+        self.layout()
+        self.selected = self.puzzle.source
         self.moves = 0
         self.time_left = min(60 + (self.level-1)*2, 75)
         self.dwell_pos = None
@@ -575,15 +580,14 @@ class Game:
         pygame.draw.rect(self.screen, border, rect, width=1, border_radius=radius)
 
     def draw_background(self, now):
-        self.screen.fill(BG)
-        # subtle grid and moving light bands
-        for x in range(0, WIDTH, 40):
-            pygame.draw.line(self.screen, (14, 23, 46), (x, 0), (x, HEIGHT), 1)
-        for y in range(0, HEIGHT, 40):
-            pygame.draw.line(self.screen, (14, 23, 46), (0, y), (WIDTH, y), 1)
-        for i in range(3):
-            y = int((now*22 + i*280) % (HEIGHT+80))-40
-            pygame.draw.line(self.screen, (12, 31, 55), (0, y), (WIDTH, y), 2)
+        if self.background is None:  # static, so build it once
+            self.background = pygame.Surface((WIDTH, HEIGHT))
+            self.background.fill(BG)
+            for x in range(0, WIDTH, 40):
+                pygame.draw.line(self.background, (12, 19, 40), (x, 0), (x, HEIGHT), 1)
+            for y in range(0, HEIGHT, 40):
+                pygame.draw.line(self.background, (12, 19, 40), (0, y), (WIDTH, y), 1)
+        self.screen.blit(self.background, (0, 0))
 
     def draw_button(self, rect, label, accent=CYAN, active=False):
         fill = (25, 47, 76) if active else (17, 29, 56)
@@ -592,44 +596,54 @@ class Game:
         self.draw_text(label, rect.center, self.font, WHITE, True)
 
     def draw_pipe(self, center, mask, size, active=False, source=False, exit_tile=False, reached=False, now=0):
+        """Draw a pipe whose arms run to the tile edge, so connected neighbours visibly join.
+
+        `size` is the full cell size. Dim pipes are empty; bright pipes carry the laser.
+        """
         x, y = center
-        radius = size * .36
-        color = GREEN if reached else CYAN
-        if active: color = MAGENTA
-        if source: color = BLUE
-        if exit_tile: color = GREEN
-        # glow on a separate alpha surface
-        key = (size, color)
-        glow = self.glow_cache.get(key)
-        if glow is None:
-            glow = pygame.Surface((size, size), pygame.SRCALPHA)
-            pygame.draw.circle(glow, color + (45,), (size//2, size//2), int(size*.34))
-            self.glow_cache[key] = glow
-        self.screen.blit(glow, (x-size//2, y-size//2))
-        pygame.draw.circle(self.screen, (13, 24, 49), (x, y), int(size*.38))
-        pygame.draw.circle(self.screen, color, (x, y), int(size*.36), 2)
-        # pipe segments from hub to edge
-        for bit, dx, dy, _ in DIRS:
-            if mask & bit:
-                end = (int(x+dx*radius*.78), int(y+dy*radius*.78))
-                pygame.draw.line(self.screen, (28, 70, 104), (x, y), end, max(7, size//10))
-                pygame.draw.line(self.screen, color, (x, y), end, max(3, size//19))
-                pygame.draw.circle(self.screen, WHITE, end, max(2, size//32))
-        pygame.draw.circle(self.screen, color, (x, y), max(4, size//16))
+        half = size // 2
+        width = max(6, size // 6)
+        lit = reached or source
         if source:
-            pygame.draw.circle(self.screen, BLUE, (x, y), int(size*.18), 2)
-            self.draw_text("S", (x, y), self.small, WHITE, True)
+            color = BLUE
         elif exit_tile:
-            pygame.draw.circle(self.screen, GREEN, (x, y), int(size*.18), 2)
-            self.draw_text("E", (x, y), self.small, WHITE, True)
+            color = GREEN
+        else:
+            color = CYAN if lit else PIPE_DIM
+        # DIRS holds (bit, row step, column step): columns are x, rows are y.
+        arms = [(x + dc * half, y + dr * half) for bit, dr, dc, _ in DIRS if mask & bit]
+        if lit:
+            key = (size, mask)
+            glow = self.glow_cache.get(key)
+            if glow is None:
+                glow = pygame.Surface((size, size), pygame.SRCALPHA)
+                for bit, dr, dc, _ in DIRS:
+                    if mask & bit:
+                        pygame.draw.line(glow, CYAN + (40,), (half, half),
+                                         (half + dc * half, half + dr * half), width * 2 + 4)
+                pygame.draw.circle(glow, CYAN + (40,), (half, half), width + 2)
+                self.glow_cache[key] = glow
+            self.screen.blit(glow, (x - half, y - half))
+        for end in arms:
+            pygame.draw.line(self.screen, PIPE_EDGE, (x, y), end, width + 6)
+        pygame.draw.circle(self.screen, PIPE_EDGE, (x, y), (width + 6) // 2)
+        for end in arms:
+            pygame.draw.line(self.screen, color, (x, y), end, width)
+        pygame.draw.circle(self.screen, color, (x, y), width // 2)
+        if lit:  # bright core = the laser travelling inside the pipe
+            for end in arms:
+                pygame.draw.line(self.screen, WHITE, (x, y), end, max(2, width // 4))
+        if source or exit_tile:
+            r = max(10, int(size * .2))
+            pygame.draw.circle(self.screen, color if (source or reached) else PANEL, (x, y), r)
+            pygame.draw.circle(self.screen, color, (x, y), r, 2)
+            self.draw_text("S" if source else "E", (x, y), self.small,
+                           BG if (source or reached) else WHITE, True)
 
     def draw_laser(self, now):
         route = self.puzzle.route()
         if len(route) > 1:
             pts = [self.tile_center(p) for p in route]
-            pygame.draw.lines(self.screen, (22, 70, 95), False, pts, 12)
-            pygame.draw.lines(self.screen, (34, 161, 221), False, pts, 5)
-            pygame.draw.lines(self.screen, CYAN, False, pts, 2)
             # travelling pulse
             total = len(pts)-1
             t = (now*1.25) % max(1, total)
@@ -650,15 +664,19 @@ class Game:
             self.draw_text(str(value), (x, 28), self.font, RED if label=="TIME" and self.time_left < 12 else CYAN)
             x += 180
 
+    def layout(self):
+        """Board geometry; set on every new level so clicks map correctly before the first draw."""
+        n = self.puzzle.size
+        self.tile_size = min(88, 480 // n)
+        board_w = n * self.tile_size
+        self.grid_rect = pygame.Rect((WIDTH - board_w) // 2, 80, board_w, board_w)
+
     def draw_game(self, now):
         self.draw_hud(now)
         n = self.puzzle.size
-        self.tile_size = min(88, 480//n)
-        board_w = n*self.tile_size
-        self.grid_rect = pygame.Rect((WIDTH - board_w)//2, 80, board_w, board_w)
+        self.layout()
         self.panel(self.grid_rect.inflate(18, 18), (10, 18, 39), (31, 66, 101), 18)
         reached = self.puzzle.reachable()
-        self.draw_laser(now)
         for r in range(n):
             for c in range(n):
                 pos = (r, c)
@@ -667,14 +685,15 @@ class Game:
                                    self.tile_size-6, self.tile_size-6)
                 pygame.draw.rect(self.screen, (14, 25, 49), rect, border_radius=12)
                 pygame.draw.rect(self.screen, (31, 53, 84), rect, 1, border_radius=12)
-                active = pos == self.hover or (self.hover is None and pos == self.selected)
+                active = pos == self.selected
                 if active:
                     pygame.draw.rect(self.screen, (54, 32, 85), rect, border_radius=12)
                     pygame.draw.rect(self.screen, MAGENTA, rect, 2, border_radius=12)
                 mask = self.puzzle.tiles[r][c]
-                self.draw_pipe(self.tile_center(pos), mask, self.tile_size-8, active,
+                self.draw_pipe(self.tile_center(pos), mask, self.tile_size, active,
                                pos == self.puzzle.source, pos == self.puzzle.exit,
                                pos in reached, now)
+        self.draw_laser(now)  # travelling pulse once the circuit is complete
         # dwell progress ring
         if self.dwell_pos and not self.dwell_fired:
             progress = min(1.0, (time.time()-self.dwell_start)/DWELL_SECONDS)
@@ -683,6 +702,12 @@ class Game:
             pygame.draw.arc(self.screen, MAGENTA, pygame.Rect(cx-self.tile_size//2+5, cy-self.tile_size//2+5,
                             self.tile_size-10, self.tile_size-10), -math.pi/2,
                             -math.pi/2+math.tau*progress, 5)
+        hint_y = self.grid_rect.bottom + 34
+        self.draw_text("Turn pipes so the bright laser path runs from S to E", (WIDTH//2, hint_y), self.font, WHITE, True)
+        self.draw_text("Click a pipe to rotate   •   Esc pause   •   R restart   •   C camera",
+                       (WIDTH//2, hint_y + 28), self.small, MUTED, True)
+        self.draw_text(self.tracker.status, (WIDTH//2, HEIGHT - 18), self.small,
+                       GREEN if self.tracker.enabled else MUTED, True)
         # webcam cursor
         tip = self.tracker.cursor
         if tip:
@@ -713,22 +738,46 @@ class Game:
             self.buttons.append((rect, action))
 
     def draw_menu(self):
-        self.draw_background(time.time())
-        self.draw_text("NEON ARCADE  /  LOGIC SYSTEMS", (WIDTH//2, 132), self.small, PURPLE, True)
-        self.draw_text("LASER", (WIDTH//2, 205), self.large, CYAN, True)
-        self.draw_text("LOGIC", (WIDTH//2, 265), self.large, PURPLE, True)
-        self.draw_text("ROTATE THE GRID. COMPLETE THE CIRCUIT.", (WIDTH//2, 327), self.font, WHITE, True)
-        self.panel(pygame.Rect(280, 365, 540, 110))
-        self.draw_text("MOUSE: click any pipe to rotate", (WIDTH//2, 391), self.font, WHITE, True)
-        self.draw_text("WEBCAM: point your index fingertip and dwell 0.5s", (WIDTH//2, 421), self.small, MUTED, True)
-        self.draw_text("ARROWS+ENTER keyboard  •  C camera  •  SPACE pauses  •  R restarts", (WIDTH//2, 448), self.small, MUTED, True)
-        self.draw_text(self.tracker.status, (WIDTH//2, 505), self.small, GREEN if self.tracker.enabled else MUTED, True)
-        self.draw_text(f"PERSONAL BEST  {self.best:06d}", (WIDTH//2, 542), self.font, WHITE, True)
-        self.buttons = []
-        rect = pygame.Rect(WIDTH//2-125, 585, 250, 52)
+        cx = WIDTH // 2
+        self.draw_text("LASER LOGIC", (cx, 62), self.large, CYAN, True)
+        self.draw_text("Rotate the pipes. Guide the laser to the exit before time runs out.",
+                       (cx, 108), self.font, WHITE, True)
+
+        card = pygame.Rect(210, 140, 680, 410)
+        self.panel(card)
+        self.draw_text("HOW TO PLAY", (cx, 172), self.medium, CYAN, True)
+        steps = [
+            ("1", "The laser starts at the blue S tile.", BLUE),
+            ("2", "Click a pipe to turn it 90° clockwise.", CYAN),
+            ("3", "Bright pipes carry the laser. Make the bright path grow.", CYAN),
+            ("4", "Reach the green E tile to clear the level.", GREEN),
+            ("5", "Beat the 60s clock. Fewer moves = more points.", MAGENTA),
+        ]
+        y = 205
+        for num, text, color in steps:
+            pygame.draw.circle(self.screen, color, (card.x + 60, y + 11), 14, 2)
+            self.draw_text(num, (card.x + 60, y + 11), self.small, WHITE, True)
+            self.draw_text(text, (card.x + 92, y), self.font, WHITE)
+            y += 38
+
+        # Legend: the three tile types the player will see.
+        pygame.draw.line(self.screen, (39, 73, 115), (card.x + 40, 400), (card.right - 40, 400), 1)
+        legend = [("Source", E, True, False, False), ("Empty pipe", E | S, False, False, False),
+                  ("Laser inside", E | W, False, False, True), ("Exit", W, False, True, False)]
+        for i, (label, mask, src, ext, lit) in enumerate(legend):
+            lx = card.x + 130 + i * 140
+            self.draw_pipe((lx, 445), mask, 56, source=src, exit_tile=ext, reached=lit)
+            self.draw_text(label, (lx, 490), self.small, MUTED, True)
+        self.draw_text("Keyboard: arrows + Enter     Webcam: hold a fingertip on a tile",
+                       (cx, card.bottom - 26), self.small, MUTED, True)
+
+        rect = pygame.Rect(cx - 125, 575, 250, 54)
         self.draw_button(rect, "START GAME", CYAN, True)
         self.buttons.append((rect, "start"))
-        self.draw_particles()
+        self.draw_text("or press Enter", (cx, 648), self.small, MUTED, True)
+        self.draw_text(f"Best score: {self.best}", (cx, 688), self.font, WHITE, True)
+        self.draw_text(self.tracker.status, (cx, HEIGHT - 24), self.small,
+                       GREEN if self.tracker.enabled else MUTED, True)
 
     def draw(self):
         now = time.time()
@@ -739,19 +788,18 @@ class Game:
         elif self.state in ("PLAYING", "PAUSED"):
             self.draw_game(now)
             if self.state == "PAUSED":
-                self.overlay("PAUSED", "The timer is stopped.", ["Take a breath. Your circuit is safe."],
+                self.overlay("PAUSED", "Timer stopped",
+                             ["Click pipes to rotate them. Connect S to E."],
                              [("RESUME", "resume"), ("MAIN MENU", "menu")], PURPLE)
         elif self.state == "LEVEL_COMPLETE":
             self.draw_game(now)
-            self.overlay("CIRCUIT COMPLETE", f"+{self.level_points} POINTS",
-                         [f"Level {self.level} secured", f"Time remaining: {int(self.level_time)}s",
-                          f"Moves used: {self.level_moves}", f"Combo chain: x{self.combo}"],
+            self.overlay("LEVEL CLEAR!", f"+{self.level_points} points",
+                         [f"{int(self.level_time)}s left   •   {self.level_moves} moves   •   combo x{self.combo}"],
                          [("NEXT LEVEL", "next"), ("MAIN MENU", "menu")], GREEN)
         elif self.state == "GAME_OVER":
-            self.overlay("TIME EXPIRED", f"FINAL SCORE  {self.score:06d}",
-                         [f"Highest level reached: {self.level}",
-                          "PERSONAL BEST!" if self.score >= self.best and self.score > 0 else f"Personal best: {self.best:06d}",
-                          "The circuit can always be rebuilt."],
+            best = "New best score!" if self.score >= self.best and self.score > 0 else f"Best: {self.best}"
+            self.overlay("TIME'S UP", f"Score: {self.score}",
+                         [f"Reached level {self.level}   •   {best}"],
                          [("PLAY AGAIN", "again"), ("MAIN MENU", "menu")], MAGENTA)
         self.draw_particles()
         pygame.display.flip()
@@ -828,9 +876,10 @@ class Game:
                 playing = self.state == "PLAYING"
                 hand = self.tracker.cursor if playing else None
                 if playing:
-                    point = hand if hand is not None else pygame.mouse.get_pos()
-                    self.hover = self.tile_at(point)
-                    if self.hover is not None and hand is None:
+                    # Hand hover drives the dwell; the mouse updates the selection only when it
+                    # moves, so it doesn't override arrow-key selection while resting on the board.
+                    self.hover = self.tile_at(hand)
+                    if self.hover is not None:
                         self.selected = self.hover
                     self.time_left -= dt
                     if self.time_left <= 0:
@@ -853,7 +902,14 @@ class Game:
                             if rect.collidepoint(event.pos):
                                 self.handle_action(action); handled = True; break
                         if not handled and self.state == "PLAYING":
-                            self.rotate_at(self.tile_at(event.pos))
+                            tile = self.tile_at(event.pos)
+                            if tile is not None:
+                                self.selected = tile
+                            self.rotate_at(tile)
+                    elif event.type == pygame.MOUSEMOTION and self.state == "PLAYING":
+                        tile = self.tile_at(event.pos)
+                        if tile is not None:
+                            self.selected = tile
                 self.hand_cursor = hand
                 self.draw()
         finally:
@@ -882,12 +938,32 @@ def self_test():
     p.tiles[p.source[0]][p.source[1]] = E
     p.tiles[p.exit[0]][p.exit[1]] = W
     assert not p.won(), "mismatched route must not win"
-    for seed in range(25):
-        board = Puzzle(5 + seed % 2, seed=seed)
+    # Four quarter-turns restore every pipe; straights/corners stay straights/corners.
+    for pipe in ALL_PIPES:
+        assert rotate_mask(pipe, 4) == pipe
+        assert (rotate_mask(pipe) in STRAIGHT) == (pipe in STRAIGHT)
+    # One-way opening (A opens east, B does not open west) must not connect.
+    p = Puzzle(5, seed=1)
+    p.tiles = [[E | W] * p.size for _ in range(p.size)]
+    sr = p.source[0]
+    p.tiles[sr][1] = N | S
+    assert (sr, 1) not in p.reachable(), "one-way opening must not connect"
+    # Fixed tiles never rotate.
+    before = p.tiles[sr][0]
+    assert not p.rotate(p.source) and p.tiles[sr][0] == before
+    for seed in range(300):
+        board = Puzzle(5 + seed % 3, seed=seed)
+        assert not board.won(), f"board {seed} starts already solved"
+        path = list(board.solution)
+        assert path[0] == board.source and path[-1] == board.exit
         for pos, mask in board.solution.items():
+            assert mask_in_bounds(pos, board.size)
+            if pos not in (board.source, board.exit):
+                assert mask in ALL_PIPES, f"unsupported pipe shape in board {seed}"
             board.tiles[pos[0]][pos[1]] = mask
         assert board.won(), f"generated solution invalid for seed {seed}"
-    print("Logic checks passed: rotation, reciprocal connections, win/loss validation, 25 solvable boards.")
+    print("Logic checks passed: rotation, reciprocal connections, fixed tiles, win/loss validation, "
+          "300 solvable boards (none pre-solved).")
 
 
 def main():
